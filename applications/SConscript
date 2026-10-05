@@ -1,0 +1,21 @@
+from building import *
+import os
+
+cwd     = GetCurrentDir()
+root    = os.path.abspath(os.path.join(cwd, '..'))
+CPPPATH = [cwd,
+           os.path.join(root, 'packages', 'aht10-v2.1.0'),
+           os.path.join(root, 'packages', 'ap3216c-v2.0.0'),
+           os.path.join(root, 'packages', 'icm20608-v1.0.0'),
+           os.path.join(root, 'libraries', 'Board_Drivers', 'rs485'),
+           os.path.join(root, 'rt-thread', 'components', 'drivers', 'sensors')]
+src = Glob('*.c')
+
+group = DefineGroup('Applications', src, depend = [''], CPPPATH = CPPPATH)
+
+list = os.listdir(cwd)
+for item in list:
+    if os.path.isfile(os.path.join(cwd, item, 'SConscript')):
+        group = group + SConscript(os.path.join(item, 'SConscript'))
+
+Return('group')

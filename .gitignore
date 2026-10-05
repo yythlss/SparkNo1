@@ -1,0 +1,63 @@
+# ============================================================
+# SparkNo1 (星火一号 / RT-Thread Studio 工程) .gitignore
+# 只提交用户源码 (applications/ 等)，忽略编译产物、IDE 生成文件
+# 与 RT-Thread Studio 自动链接/下载的目录
+# ============================================================
+
+# ---- 编译产物 ----
+# Debug/ 由 RT-Thread Studio 生成, build/ 由 scons 生成
+Debug/
+build/
+*.o
+*.d
+*.map
+*.elf
+*.bin
+*.hex
+*.axf
+*.obj
+*.out
+*.bak
+*.dep
+*.i
+*.lib
+*.idb
+*.ilk
+*.pdb
+*.exe
+*.old
+
+# ---- scons / menuconfig 生成的文件 ----
+.config
+.config.old
+.config.*
+.sconsign.dblite
+rtconfig.h
+rtconfig.pyc
+rtconfig_preinc.h
+cconfig.h
+
+# ---- RT-Thread Studio 自动链接 / 下载的目录 (非用户源码) ----
+rt-thread/
+libraries/
+packages/
+
+# ---- IDE / 工具链元数据 ----
+.settings/
+.vscode/
+DebugConfig/
+RTE/
+documentation/html
+*~
+
+# ---- 标签类工具 ----
+GPATH
+GRTAGS
+GTAGS
+
+# ---- 系统 ----
+.DS_Store
+
+# ---- 调试器日志 ----
+JLinkLog.txt
+JLinkSettings.ini
