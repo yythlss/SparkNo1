@@ -366,6 +366,8 @@
 #define BSP_USING_PWM
 #define BSP_USING_PWM3
 #define BSP_USING_PWM3_CH2
+#define BSP_USING_PWM2
+#define BSP_USING_PWM2_CH4
 #define BSP_USING_I2C
 #define BSP_USING_I2C2
 #define BSP_I2C2_SCL_PIN 81

@@ -38,6 +38,14 @@
 /* ------------------------------------------------------------ 配置 */
 #define MB_DEV_NAME      "uart3"
 #define MB_SLAVE_ADDR    1
+
+/* 真实 PWM 输出（功能扩展）：TIM2_CH4（PA3，CubeMX 已配为 PWM Generation）。
+ * 由 REG_PWM_DUTY（0.1%，0~1000）驱动，独立于 RGB 亮度演示，可接电机/阀门/调光负载。
+ * 需在 menuconfig 开启 BSP_USING_PWM2 + BSP_USING_PWM2_CH4；引脚 PA3 需空闲。
+ * 设备未找到时自动回退（仅 RGB 亮度演示，不影响其它功能）。 */
+#define DBG_PWM_DEV_NAME  "pwm2"
+#define DBG_PWM_CH        4
+#define DBG_PWM_PERIOD_NS 1000000U   /* 1 kHz 周期 */
 #define MB_BAUD          BAUD_RATE_115200
 #define MB_T35_TICKS     5          /* 帧间隔 5 ms，覆盖 9600 以上波特率 */
 #define MB_FRAME_TIMEOUT 100        /* 收不齐最小帧长时的兜底丢弃超时 (ms) */
@@ -186,14 +194,31 @@ static void mb_hexdump(const char *tag, const rt_uint8_t *buf, rt_uint16_t len)
 /* 前置声明：mb_actuator_init 里要先调用它，避免隐式声明与 static 定义冲突 */
 static void mb_actuator_apply(void);
 
+/* 真实 PWM 设备句柄（TIM2_CH4 / PA3），未启用 BSP_USING_PWM2 时为 RT_NULL */
+static rt_device_t g_pwm = RT_NULL;
+
 /* 把 DO_CTRL / PWM_DUTY 落到硬件：蜂鸣器(GPIO 直驱) + 板载 RGB(WS2812, 19 颗 SK6805)。
- * PWM_DUTY 单位 0.1%，范围 0~1000；这里暂映射为 RGB 亮度，直观演示占空比→亮度。
+ * PWM_DUTY 单位 0.1%，范围 0~1000；除映射为 RGB 亮度（演示）外，同时驱动真实 PWM 输出。
  * 注意：led_matrix_fill_rgb() 只写内存缓冲，必须再调 led_matrix_reflash() 才推到灯上。
  * 仅当 menuconfig 开启 BSP_USING_LED_MATRIX + BSP_USING_ONBOARD_LED_MATRIX 时 RGB 才编译生效。 */
 static void mb_actuator_init(void)
 {
     rt_pin_mode(PIN_BEEP, PIN_MODE_OUTPUT);
     rt_pin_write(PIN_BEEP, PIN_LOW);   /* 默认静音 */
+
+    /* 真实 PWM：启用 TIM2_CH4（PA3）输出，占空比初值取当前 REG_PWM_DUTY */
+    g_pwm = rt_device_find(DBG_PWM_DEV_NAME);
+    if (g_pwm != RT_NULL) {
+        if (rt_pwm_enable(g_pwm, DBG_PWM_CH) == RT_EOK) {
+            LOG_I("real PWM enabled on %s ch%d (PA3)", DBG_PWM_DEV_NAME, DBG_PWM_CH);
+        } else {
+            LOG_W("enable %s ch%d failed", DBG_PWM_DEV_NAME, DBG_PWM_CH);
+            g_pwm = RT_NULL;
+        }
+    } else {
+        LOG_I("%s not found, PWM output disabled (enable BSP_USING_PWM2 in menuconfig)",
+              DBG_PWM_DEV_NAME);
+    }
 
 #ifdef BSP_USING_ONBOARD_LED_MATRIX
     led_matrix_init();                  /* 初始化 WS2812 时序缓冲（幂等，可重复调用） */
@@ -218,6 +243,14 @@ static void mb_actuator_apply(void)
     rt_uint16_t duty    = g_hold[REG_PWM_DUTY];          /* 0.1%，0~1000 */
 
     rt_pin_write(PIN_BEEP, (do_ctrl & DO_BEEP) ? PIN_HIGH : PIN_LOW);
+
+    /* 真实 PWM 输出：REG_PWM_DUTY(0~1000) → 占空比 0~100%，驱动 TIM2_CH4(PA3)。
+     * 与 RGB 亮度演示并存，两者读同一个寄存器。 */
+    if (g_pwm != RT_NULL) {
+        rt_uint32_t pulse = (DBG_PWM_PERIOD_NS / 1000U) *
+                            ((duty > 1000u) ? 1000u : duty);   /* ns */
+        rt_pwm_set(g_pwm, DBG_PWM_CH, DBG_PWM_PERIOD_NS, pulse);
+    }
 
 #ifdef BSP_USING_ONBOARD_LED_MATRIX
     /* 非纯色模式由灯效线程接管，这里不要抢着写，否则动画会被每 500ms 的周期刷新打断 */
