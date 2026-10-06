@@ -28,11 +28,16 @@ build/
 *.old
 
 # ---- scons / menuconfig 生成的文件 ----
-.config
+# 注：rtconfig.h / .config 虽由 menuconfig 生成，但本工程**必须纳入版本控制**：
+#     外设开关（如 BSP_USING_UART3）就写在里面。不提交的话 clone 出来的工程
+#     从站链路直接不可用（开机 [mbs] find uart3 failed）。
+#     二者必须成对提交：只提交 rtconfig.h 的话，下次 menuconfig 保存会按旧的
+#     .config 重新生成，把修复覆盖掉。
+# .config
+# rtconfig.h
 .config.old
 .config.*
 .sconsign.dblite
-rtconfig.h
 rtconfig.pyc
 rtconfig_preinc.h
 cconfig.h

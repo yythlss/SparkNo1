@@ -24,6 +24,8 @@
 #endif
 #ifdef BSP_USING_RS485
 #include "drv_rs485.h"
+/* 网关接口（实现在 mb_slave.c）：把 RS485 收到的字节喂进透传缓冲 */
+void mb_rs485_feed_byte(rt_uint8_t byte);
 #endif
 
 #define LINK_UART_NAME   "uart3"     /* PB10(TX) / PB11(RX)，与 D12x 的内部链路 */
@@ -122,4 +124,36 @@ static int rs485_start(void)
     return -RT_ERROR;
 }
 MSH_CMD_EXPORT(rs485_start, init rs485 (uart6));
+#endif
+
+/* ---------------------------------------------------- RS485 接收线程（第 7 步） */
+#ifdef BSP_USING_RS485
+/* 板级驱动 drv_rs485.c 在 BSP_USING_LED_MATRIX_RS485_DEMO 开启时，会把本函数
+ * 作为 RS485 接收线程的入口（见 drv_rs485.c:102-103）。
+ *
+ * 原先这里只是个打印一行字的占位桩（只为满足链接）。第 7 步把它落实为
+ * 真正的「字节喂入」线程：驱动读到的每个字节交给 mb_rs485_feed_byte()，
+ * 由网关线程 mb_rs485_wait_frame() 按帧间隔判定收齐。
+ *
+ * 注意：drv_rs485.c 的 rs485_thread_entry() 版本是「读完即丢」，
+ * 只做通断/回显测试用；透传必须保留全部字节，所以不能用它。 */
+void led_matrix_receieve_task(void *parameter)
+{
+    rt_uint8_t ch;
+
+    (void)parameter;
+    rt_kprintf("[rs485] rx task started (feeding Modbus gateway)\n");
+
+    for (;;)
+    {
+        if (rt_device_read(rs485_serial, -1, &ch, 1) == 1)
+        {
+            mb_rs485_feed_byte(ch);
+        }
+        else
+        {
+            rt_sem_take(&rs485_rx_sem, RT_WAITING_FOREVER);
+        }
+    }
+}
 #endif

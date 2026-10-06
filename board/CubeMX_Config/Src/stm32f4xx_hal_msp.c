@@ -631,6 +631,26 @@ void HAL_TIM_MspPostInit(TIM_HandleTypeDef* htim)
 
   /* USER CODE END TIM2_MspPostInit 1 */
   }
+  else if(htim->Instance==TIM3)
+  {
+  /* USER CODE BEGIN TIM3_MspPostInit 0 */
+
+  /* USER CODE END TIM3_MspPostInit 0 */
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    /**TIM3 GPIO Configuration
+    PA7     ------> TIM3_CH2  (板载 19 颗 SK6805 LED 矩阵 DIN；PA7 默认被以太网 RMII/ETH_CRS_DV 占用，须关闭 LWIP 释放该脚)
+    */
+    GPIO_InitStruct.Pin = GPIO_PIN_7;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /* USER CODE BEGIN TIM3_MspPostInit 1 */
+
+  /* USER CODE END TIM3_MspPostInit 1 */
+  }
 
 }
 /**
@@ -774,7 +794,12 @@ void HAL_UART_MspInit(UART_HandleTypeDef* huart)
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN USART3_MspInit 1 */
-
+    /* RT-Thread 的 drv_usart.c 自带 USART3_IRQHandler（stm32f4xx_it.c 不参与编译），
+     * 但 CubeMX 生成的这段默认没开 NVIC —— 不开则 RXNE 中断永不触发，
+     * Modbus 从站收不到任何请求（现象是「收不到帧」而不是「收错帧」）。
+     * 写在 USER CODE 块内，日后重新生成 CubeMX 代码不会被 .ioc 覆盖。 */
+    HAL_NVIC_SetPriority(USART3_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(USART3_IRQn);
   /* USER CODE END USART3_MspInit 1 */
   }
   else if(huart->Instance==USART6)
