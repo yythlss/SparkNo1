@@ -120,5 +120,32 @@ FinSH 具有命令自动补全功能，输入命令的部分字符（前几个�
 15. [使用动态内存堆](kernel_docs/dynmem_sample/dynmem_sample.md)
 16. [使用动态内存池](kernel_docs/mempool_sample/mempool_sample.md)
 
+---
+
+## 脱机自测结果（便携式工业调试仪 · 从机板）
+
+> 不连接主机（D12x）的情况下，星火一号单板即可验证传感器采集、执行器、灯效、RS485 网关四条链路。
+> 接线：从机独立 5V 供电，USB-Serial 接 uart1（115200/8N1）作为 console。
+
+### 实测命令与结果
+
+| 命令 | 预期 | 实测 |
+|---|---|---|
+| `list_device` | uart1/uart3/uart6 注册；pwm2/pwm3 已注册 | ✅ 一致（证明 UART3 修复 + 真实 PWM 宏已编入固件） |
+| `sensor_check` | AHT10/AP3216C/ICM20608 读数 | ✅ temp=25.1°C humi=46.4% / lux=240.1 / acc·gyro 正常 |
+| `mb_dump` | 心跳递增、err=0、各传感器值 | ✅ heartbeat/uptime 递增，值合理 |
+| `mb_do 0x0007 500` | RGB 三色亮、占空比 50% | ✅ do_ctrl=0x0007 pwm=500（不含 BEEP 位，蜂鸣器不响属正常） |
+| `mb_fx 2 3` + `mb_fx_stat` | 灯效线程活跃 | ✅ thread 非 0、phase ADVANCING |
+| `mb_led_diag` | 矩阵全白 | ✅ ONBOARD_LED_MATRIX=ON（肉眼确认 WS2812 点亮） |
+| `mb_rs485_lb 1` → `mb_rs485 1 3 0x10 2` | ok，`[16]=256 [17]=257` | ✅ 应答 `01 03 04 01 00 01 01 3B 9F` |
+| `mb_rs485_lb crc` → `mb_rs485 1 3 0x10 2` | crc-err | ✅ `calc=9F3B got=9FC4` |
+| `mb_rs485_lb 0` → `mb_rs485 1 3 0x10 2` | timeout（空总线，证明确实发出帧） | ✅ 一致 |
+
+### 说明
+
+- `mb_do` 的蜂鸣器位是 `bit3`（`0x08`）。要同时验蜂鸣器用 `mb_do 0x000F 500`；若仍静音，改 `mb_slave.c` 的 `PIN_BEEP` 由 PB0 试 PB1。
+- `list_device` 看不到 `aht10` 等传感器设备是正常的——三传感器走软件 I2C 直读，未注册为 RT-Thread sensor 框架 device。
+- RS485 网关自测完用 `mb_rs485_lb 1` 切回；双板联调时再 `mb_rs485_lb 0`。
+
 
 
