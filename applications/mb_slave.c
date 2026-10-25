@@ -31,6 +31,8 @@
 #include "drv_rs485.h"        /* 现场总线：RS485 主站透传（第 7 步） */
 #endif
 
+#include "mb_slave_data.h"    /* 采集值快照结构（云端上传模块要用） */
+
 #define DBG_TAG "mbs"
 #define DBG_LVL DBG_LOG
 #include <rtdbg.h>
@@ -83,6 +85,18 @@
 #define REG_RS485_ERRCNT 0x0307     /* RO 累计失败次数（超时+校验错） */
 #define REG_RS485_DATA   0x0380     /* RW 透传数据区，最多 RS485_BUF_MAX 个寄存器 */
 
+/* D12x 主控终端「经本从站中转」上报的本板数据区
+ * --------------------------------------------------------------------------
+ * D12x 自身不上云（uplink=none），它把结温/电量/运行态通过 Modbus 写到这里，
+ * 由本从站的云端上传线程一并 POST 到云端，device 标为 "d12x"，
+ * 于是小程序数据卡片的「数据来源」会出现第二个节点「D12x 主控终端」。
+ * 从站对这片区域只负责原样转发，不参与采集、也不改值。 */
+#define REG_D12X_TEMP    0x0400     /* RW D12x SoC 结温 0.1 ℃（int16，可负） */
+#define REG_D12X_BAT     0x0401     /* RW D12x 电量 0.1 % */
+#define REG_D12X_CPU     0x0402     /* RW D12x CPU 占用 0.1 % */
+#define REG_D12X_MEM     0x0403     /* RW D12x 剩余内存 KB */
+#define REG_D12X_UPTIME  0x0404     /* RW D12x 运行秒数 */
+
 /* 透传缓冲上限（单位：寄存器 = 字节，数据区是「一个寄存器装一个字节」的紧凑排布）。
  * 一个 Modbus RTU 帧最长 256 字节，这里取 128 字节窗口：
  * 够 FC03 读 ~60 个寄存器（应答 5+2*qty），已经是现场扫描的实用上限。
@@ -92,13 +106,64 @@
  *    实打实的越界写。现在窗口、下标上限、REG_COUNT 三者对齐：0x0380+128 = 0x0400。 */
 #define RS485_BUF_MAX    128
 
-#define REG_COUNT        0x0400     /* 必须 = REG_RS485_DATA + RS485_BUF_MAX，别再留余量 */
+#define REG_COUNT        0x0500     /* 须 ≥ REG_RS485_DATA + RS485_BUF_MAX(0x0400)；
+                                        上方再多留 0x0400~0x0404 给 D12x 中转数据区 */
 
 /* ---------------------------------------------------------- 内部状态 */
 static rt_device_t        g_dev       = RT_NULL;
 static struct rt_semaphore g_rx_sem;
 static rt_uint16_t        g_hold[REG_COUNT];
 static rt_uint8_t         g_addr      = MB_SLAVE_ADDR;
+
+/* ------------------------------------------- 数据快照（供云端上传读取） */
+/*
+ * 只对外暴露「只读副本」，不把 g_hold 改成全局：
+ *   上传线程拿到的永远是一份快照，不会与 Modbus 写操作抢同一个数组元素，
+ *   uint16 的读取在 32 位机上是单条指令，天然原子。
+ */
+rt_uint16_t mb_hold_get(rt_uint16_t addr)
+{
+    if (addr >= REG_COUNT)
+    {
+        return 0;
+    }
+    return g_hold[addr];
+}
+
+void mb_snapshot_get(mb_snapshot_t *snap)
+{
+    if (snap == RT_NULL)
+    {
+        return;
+    }
+
+    snap->heartbeat = g_hold[REG_HEARTBEAT];
+    snap->uptime    = g_hold[REG_UPTIME];
+    snap->err       = g_hold[REG_ERR];
+    snap->temp      = (rt_int16_t)g_hold[REG_TEMP];
+    snap->humi      = (rt_int16_t)g_hold[REG_HUMI];
+    snap->lux       = g_hold[REG_LUX];
+    snap->ps        = g_hold[REG_PS];
+    snap->acc_x     = (rt_int16_t)g_hold[REG_ACC_X];
+    snap->acc_y     = (rt_int16_t)g_hold[REG_ACC_Y];
+    snap->acc_z     = (rt_int16_t)g_hold[REG_ACC_Z];
+    snap->gyro_x    = (rt_int16_t)g_hold[REG_GYRO_X];
+    snap->gyro_y    = (rt_int16_t)g_hold[REG_GYRO_Y];
+    snap->gyro_z    = (rt_int16_t)g_hold[REG_GYRO_Z];
+}
+
+/* D12x 中转数据区快照：云端上传线程用它把 D12x 本板数据以 device="d12x" 上报 */
+void mb_d12x_get(mb_d12x_snap_t *snap)
+{
+    if (snap == RT_NULL)
+        return;
+
+    snap->temp    = (rt_int16_t)g_hold[REG_D12X_TEMP];
+    snap->bat     = (rt_uint16_t)g_hold[REG_D12X_BAT];
+    snap->cpu     = (rt_uint16_t)g_hold[REG_D12X_CPU];
+    snap->mem     = (rt_uint16_t)g_hold[REG_D12X_MEM];
+    snap->uptime  = (rt_uint16_t)g_hold[REG_D12X_UPTIME];
+}
 
 /* -------------------------------------------------------------- CRC16 */
 static rt_uint16_t mb_crc16(const rt_uint8_t *buf, rt_uint16_t len)
@@ -209,7 +274,7 @@ static void mb_actuator_init(void)
     /* 真实 PWM：启用 TIM2_CH4（PA3）输出，占空比初值取当前 REG_PWM_DUTY */
     g_pwm = rt_device_find(DBG_PWM_DEV_NAME);
     if (g_pwm != RT_NULL) {
-        if (rt_pwm_enable(g_pwm, DBG_PWM_CH) == RT_EOK) {
+        if (rt_pwm_enable((struct rt_device_pwm *)g_pwm, DBG_PWM_CH) == RT_EOK) {
             LOG_I("real PWM enabled on %s ch%d (PA3)", DBG_PWM_DEV_NAME, DBG_PWM_CH);
         } else {
             LOG_W("enable %s ch%d failed", DBG_PWM_DEV_NAME, DBG_PWM_CH);
@@ -249,7 +314,7 @@ static void mb_actuator_apply(void)
     if (g_pwm != RT_NULL) {
         rt_uint32_t pulse = (DBG_PWM_PERIOD_NS / 1000U) *
                             ((duty > 1000u) ? 1000u : duty);   /* ns */
-        rt_pwm_set(g_pwm, DBG_PWM_CH, DBG_PWM_PERIOD_NS, pulse);
+        rt_pwm_set((struct rt_device_pwm *)g_pwm, DBG_PWM_CH, DBG_PWM_PERIOD_NS, pulse);
     }
 
 #ifdef BSP_USING_ONBOARD_LED_MATRIX

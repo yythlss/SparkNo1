@@ -1,5 +1,6 @@
 from building import *
 import os
+import glob as _glob
 
 cwd     = GetCurrentDir()
 root    = os.path.abspath(os.path.join(cwd, '..'))
@@ -9,6 +10,12 @@ CPPPATH = [cwd,
            os.path.join(root, 'packages', 'icm20608-v1.0.0'),
            os.path.join(root, 'libraries', 'Board_Drivers', 'rs485'),
            os.path.join(root, 'rt-thread', 'components', 'drivers', 'sensors')]
+
+# RW007 包（rw007_port.c 要它的 spi_wifi_rw007.h）。版本号由 RT-Thread Settings 决定，
+# 这里按目录名 glob，避免把版本号写死。没拉包时列表为空，rw007_port.c 也被宏守卫掉了。
+for _p in _glob.glob(os.path.join(root, 'packages', 'rw007-*')):
+    CPPPATH.append(os.path.join(_p, 'inc'))
+
 src = Glob('*.c')
 
 group = DefineGroup('Applications', src, depend = [''], CPPPATH = CPPPATH)
